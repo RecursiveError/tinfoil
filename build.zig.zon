@@ -1,0 +1,12 @@
+.{
+    .name = .TINFOIL,
+    .version = "0.0.0",
+    .fingerprint = 0x1e0a9bbd502bff5c, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0-dev.1471+ff10b90bc",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
