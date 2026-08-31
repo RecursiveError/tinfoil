@@ -66,7 +66,7 @@ pub const BootKeyboard = struct {
         .interval = 100,
     }),
 
-    lock_free: bool = false,
+    lock: std.atomic.Mutex = .locked,
 
     fn setup_handler(inst: *const anyopaque, event: core.Gateway.InterfaceEventIn) core.Gateway.InterfaceEventOut {
         const self: *@This() = @ptrCast(@alignCast(@constCast(inst)));
@@ -75,7 +75,7 @@ pub const BootKeyboard = struct {
             .enabled => {
                 self.ep1.ctrl.set_ep_state(.NAK, 0) catch @panic("HID ENABLE FAIL");
                 self.ep2.ctrl.set_ep_state(.READY, 0) catch @panic("HID ENABLE FAIL");
-                self.lock_free = true;
+                self.lock.unlock();
             },
             .class_setup => {
                 return .ZLP;
@@ -91,7 +91,7 @@ pub const BootKeyboard = struct {
     fn ep1_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "ep1") = @ptrCast(@alignCast(@constCast(self)));
         const inner_self: *@This() = @fieldParentPtr("ep1", ep);
-        inner_self.lock_free = true;
+        inner_self.lock.unlock();
     }
 
     fn ep2_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
@@ -127,12 +127,11 @@ pub const BootKeyboard = struct {
         });
     }
 
-    pub fn simple_press(self: *volatile BootKeyboard, report: Scankey.Report) !void {
-        while (!self.lock_free) {}
-        self.lock_free = false;
+    pub fn simple_press(self: *BootKeyboard, report: Scankey.Report) !void {
+        while (@atomicLoad(std.atomic.Mutex, &self.lock, .monotonic) == .locked) {}
+        while (self.lock.tryLock()) {}
         const to_send = report.report();
         _ = try self.ep1.ctrl.send_data(&to_send);
         try self.ep1.ctrl.set_ep_state(.READY, null);
-        while (!self.lock_free) {}
     }
 };
