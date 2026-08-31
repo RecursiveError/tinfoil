@@ -15,6 +15,7 @@ pub const MetaInterface = struct {
     endpoints: []const @EnumLiteral(),
     setup: ?*const fn (*const anyopaque, Gateway.InterfaceEventIn) Gateway.InterfaceEventOut,
     iInterface: String.USBStrings = .{},
+    instance_num: ?usize = null,
 
     pub fn into_descriptor(self: @This(), number: u8, string_index: u8) descriptors.InterfaceDescriptor {
         return descriptors.InterfaceDescriptor{

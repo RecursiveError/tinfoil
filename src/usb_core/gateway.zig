@@ -26,6 +26,7 @@ pub const InterfaceEventOut = union(enum) {
 pub const InterfaceGateway = struct {
     instance: *const anyopaque,
     setup_call: ?*const fn (*const anyopaque, InterfaceEventIn) InterfaceEventOut,
+    instance_num: ?usize,
 
     pub fn setup(self: *const @This(), event: InterfaceEventIn) GatewayError!InterfaceEventOut {
         if (self.setup_call) |handler| {
@@ -69,6 +70,34 @@ pub const EpGatewayAPI = struct {
     get_ep_state: *const fn (*const anyopaque, dir: EpDir, EpNum: u4) GatewayError!HardwareState,
 };
 
+pub const IO_CTRL = struct {
+    pub inline fn send_data(self: *const IO_CTRL, data: []const u8) GatewayError!usize {
+        const gate: *const EpGateway = @alignCast(@fieldParentPtr("ctrl", self));
+        const ep = try gate.check_ep();
+        if (gate.dir == .Out) return GatewayError.InvalidOp;
+        return gate.hardware_api.send_data(gate.hardware_api.driver, ep, data);
+    }
+
+    pub inline fn recive_data(self: *const IO_CTRL, data: []u8) GatewayError![]const u8 {
+        const gate: *const EpGateway = @alignCast(@fieldParentPtr("ctrl", self));
+        const ep = try gate.check_ep();
+        if (gate.dir == .In) return GatewayError.InvalidOp;
+        return gate.hardware_api.recive_data(gate.hardware_api.driver, ep, gate.dir, data);
+    }
+
+    pub inline fn set_ep_state(self: *const IO_CTRL, state: EpState, force_pid: ?u4) GatewayError!void {
+        const gate: *const EpGateway = @alignCast(@fieldParentPtr("ctrl", self));
+        const ep = try gate.check_ep();
+        try gate.hardware_api.set_ep_state(gate.hardware_api.driver, gate.dir, ep, state, force_pid);
+    }
+
+    pub inline fn get_ep_state(self: *const IO_CTRL) GatewayError!HardwareState {
+        const gate: *const EpGateway = @alignCast(@fieldParentPtr("ctrl", self));
+        const ep = try gate.check_ep();
+        return gate.hardware_api.get_ep_state(gate.hardware_api.driver, gate.dir, ep);
+    }
+};
+
 pub const EpGateway = struct {
     //instance of the EP, used to notify events
     instance: *const anyopaque,
@@ -77,32 +106,9 @@ pub const EpGateway = struct {
     hardware_api: *const EpGatewayAPI = undefined,
     dir: EpDir = undefined,
     ep: ?u4 = null,
+    ctrl: IO_CTRL = .{},
 
     inline fn check_ep(self: *const EpGateway) GatewayError!u4 {
         return self.ep orelse GatewayError.GatewayOff;
     }
-
-    pub inline fn send_data(self: *const EpGateway, data: []const u8) GatewayError!usize {
-        const ep = try self.check_ep();
-        if (self.dir == .Out) return GatewayError.InvalidOp;
-        return self.hardware_api.send_data(self.hardware_api.driver, ep, self.dir, data);
-    }
-
-    pub inline fn recive_data(self: *const EpGateway, data: []u8) GatewayError![]const u8 {
-        const ep = try self.check_ep();
-        if (self.dir == .In) return GatewayError.InvalidOp;
-        return self.hardware_api.recive_data(self.hardware_api.driver, ep, self.dir, data);
-    }
-
-    pub inline fn set_ep_state(self: *const EpGateway, state: EpState, force_pid: ?u4) GatewayError!void {
-        const ep = try self.check_ep();
-        try self.hardware_api.set_ep_state(self.hardware_api.driver, self.dir, ep, state, force_pid);
-    }
-
-    pub inline fn get_ep_state(self: *const EpGateway) GatewayError!HardwareState {
-        const ep = try self.check_ep();
-        return self.hardware_api.get_ep_state(self.hardware_api.driver, self.dir, ep);
-    }
 };
-
-pub const IO_CTRL = *const EpGateway;

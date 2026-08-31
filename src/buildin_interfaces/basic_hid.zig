@@ -1,5 +1,6 @@
 const std = @import("std");
 const core = @import("core");
+const Scankey = @import("basic_scankey.zig");
 
 const Endpoint = core.Endpoint;
 const Strings = core.Strings;
@@ -65,6 +66,8 @@ pub const BootKeyboard = struct {
         .interval = 100,
     }),
 
+    lock_free: bool = false,
+
     fn setup_handler(inst: *const anyopaque, event: core.Gateway.InterfaceEventIn) core.Gateway.InterfaceEventOut {
         const self: *@This() = @ptrCast(@alignCast(@constCast(inst)));
 
@@ -72,6 +75,7 @@ pub const BootKeyboard = struct {
             .enabled => {
                 self.ep1.CTRL.set_ep_state(.NAK, 0) catch @panic("HID ENABLE FAIL");
                 self.ep2.CTRL.set_ep_state(.READY, 0) catch @panic("HID ENABLE FAIL");
+                self.lock_free = true;
             },
             .class_setup => {
                 return .ZLP;
@@ -86,13 +90,12 @@ pub const BootKeyboard = struct {
 
     fn ep1_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "ep1") = @ptrCast(@alignCast(@constCast(self)));
-        const foo: *@This() = @fieldParentPtr("ep1", ep);
-        _ = foo;
+        const inner_self: *@This() = @fieldParentPtr("ep1", ep);
+        inner_self.lock_free = true;
     }
 
     fn ep2_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "ep2") = @ptrCast(@alignCast(@constCast(self)));
-
         ep.CTRL.set_ep_state(.READY, null) catch @panic("HID ENABLE FAIL");
     }
 
@@ -122,5 +125,14 @@ pub const BootKeyboard = struct {
                 .iInterface = foo_interface_string,
             },
         });
+    }
+
+    pub fn simple_press(self: *volatile BootKeyboard, report: Scankey.Report) !void {
+        while (!self.lock_free) {}
+        self.lock_free = false;
+        const to_send = report.report();
+        _ = try self.ep1.CTRL.send_data(&to_send);
+        try self.ep1.CTRL.set_ep_state(.READY, null);
+        while (!self.lock_free) {}
     }
 };

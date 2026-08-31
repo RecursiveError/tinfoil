@@ -105,7 +105,7 @@ pub fn Endpoint(comptime config: Config) type {
     }
     return struct {
         event: EventHandler = no_op_event_handler,
-        CTRL: Gateway.IO_CTRL = undefined,
+        CTRL: *const Gateway.IO_CTRL = undefined,
 
         pub fn into_descriptor(ep_num: u4) EndpointDescriptor {
             //Only in USB HS, for now we will assume that the user will set the ATO field correctly based on the USB speed they intend to use.

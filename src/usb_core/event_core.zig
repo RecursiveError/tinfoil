@@ -144,7 +144,7 @@ pub const EventCore = struct {
         for (self.ep_gateway) |*ep| {
             ep.hardware_api = self.API;
             const ep_inst = Endpoint.restore_ep(ep.instance);
-            ep_inst.CTRL = ep;
+            ep_inst.CTRL = &ep.ctrl;
             self.enabled = true;
         }
     }
@@ -366,10 +366,10 @@ pub const EventCore = struct {
                 }
                 const conf = &self.config_blob[iconf - 1];
                 //set eps
-                for (conf.endpoint_assignment.in, conf.endpoint_assignment.out, 0..) |in, out, idx| {
+                for (conf.endpoint_assignment.in, conf.endpoint_assignment.out, 1..) |in, out, idx| {
                     switch (in) {
                         .assigned => |ca| {
-                            const gate = &self.ep_gateway[ca.gateway_num];
+                            const gate: *EpGateway = &self.ep_gateway[ca.gateway_num];
                             gate.dir = .In;
                             gate.ep = @intCast(idx);
                         },
@@ -377,7 +377,7 @@ pub const EventCore = struct {
                     }
                     switch (out) {
                         .assigned => |ca| {
-                            const gate = &self.ep_gateway[ca.gateway_num];
+                            const gate: *EpGateway = &self.ep_gateway[ca.gateway_num];
                             gate.dir = .Out;
                             gate.ep = @intCast(idx);
                         },
@@ -407,9 +407,9 @@ pub const EventCore = struct {
 
                         switch (feature) {
                             0x0 => {
-                                const st = gate.get_ep_state() catch return EventError.INVALID_SETUP;
+                                const st = gate.ctrl.get_ep_state() catch return EventError.INVALID_SETUP;
                                 if (st.state == .STALL) {
-                                    gate.set_ep_state(.NAK, null) catch return EventError.INVALID_EP;
+                                    gate.ctrl.set_ep_state(.NAK, null) catch return EventError.INVALID_EP;
                                 }
                             },
                             else => return EventError.NOT_IMPLEMENTED,

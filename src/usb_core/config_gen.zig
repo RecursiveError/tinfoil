@@ -56,6 +56,7 @@ const InnerEP = struct {
 const InnerMapInterface = struct {
     path: []const u8,
     setup: ?*const fn (*const anyopaque, Gateway.InterfaceEventIn) Gateway.InterfaceEventOut,
+    instance_num: ?usize,
 };
 
 //TODO marge class and subclass/protocol into a single type, and add support for class specific descriptors in the future.
@@ -133,6 +134,7 @@ pub fn DeviceBuilder(comptime device: DeviceConfig, all_interfaces: anytype, com
         blob.interfaces[idx] = InterfaceGateway{
             .instance = get_instance(all_interfaces, path.path),
             .setup_call = path.setup,
+            .instance_num = path.instance_num,
         };
     }
 
@@ -994,6 +996,7 @@ fn inner_interface_paths(inner: type, comptime base_path: []const u8, meta: []co
                 out[idx.*] = InnerMapInterface{
                     .path = base_path,
                     .setup = iface.setup,
+                    .instance_num = iface.instance_num,
                 };
                 idx.* += 1;
             },
@@ -1002,6 +1005,7 @@ fn inner_interface_paths(inner: type, comptime base_path: []const u8, meta: []co
                     out[idx.*] = InnerMapInterface{
                         .path = base_path,
                         .setup = iface.setup,
+                        .instance_num = iface.instance_num,
                     };
                     idx.* += 1;
                 }
