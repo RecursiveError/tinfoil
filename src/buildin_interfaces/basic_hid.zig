@@ -73,14 +73,14 @@ pub const BootKeyboard = struct {
 
         switch (event) {
             .enabled => {
-                self.ep1.CTRL.set_ep_state(.NAK, 0) catch @panic("HID ENABLE FAIL");
-                self.ep2.CTRL.set_ep_state(.READY, 0) catch @panic("HID ENABLE FAIL");
+                self.ep1.ctrl.set_ep_state(.NAK, 0) catch @panic("HID ENABLE FAIL");
+                self.ep2.ctrl.set_ep_state(.READY, 0) catch @panic("HID ENABLE FAIL");
                 self.lock_free = true;
             },
             .class_setup => {
                 return .ZLP;
             },
-            .standart_setup => {
+            .standard_setup => {
                 return .{ .send_data = &report_descriptor };
             },
             else => {},
@@ -96,7 +96,7 @@ pub const BootKeyboard = struct {
 
     fn ep2_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "ep2") = @ptrCast(@alignCast(@constCast(self)));
-        ep.CTRL.set_ep_state(.READY, null) catch @panic("HID ENABLE FAIL");
+        ep.ctrl.set_ep_state(.READY, null) catch @panic("HID ENABLE FAIL");
     }
 
     pub fn init() @This() {
@@ -131,8 +131,8 @@ pub const BootKeyboard = struct {
         while (!self.lock_free) {}
         self.lock_free = false;
         const to_send = report.report();
-        _ = try self.ep1.CTRL.send_data(&to_send);
-        try self.ep1.CTRL.set_ep_state(.READY, null);
+        _ = try self.ep1.ctrl.send_data(&to_send);
+        try self.ep1.ctrl.set_ep_state(.READY, null);
         while (!self.lock_free) {}
     }
 };

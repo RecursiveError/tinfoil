@@ -70,25 +70,25 @@ pub const EndpointTypes = union(EndpointEnum) {
 
 /// EP are ny default automatically enumerated starting from 1
 /// but the user can set a custom bias for the endpoint numbers if needed.
-pub const EPBias = union(enum) {
+pub const EP_Bias = union(enum) {
     automatic, //normal bias
     soft_bias: u4, //try to use the provided bias for the endpoint number, but if it's already used, fallback to automatic enumeration.
     hard_bias: u4, //try to use the provided bias for the endpoint number, if it's already used, return an error at compile time.
 };
 
-//TODO: Add check for diferent USB speeds. for now the user must set manually.
+//TODO: Add check for different USB speeds. for now the user must set manually.
 pub const Config = struct {
     ep_type: EndpointTypes,
     direction: EndpointDirection,
     interval: u8,
     max_packet_size: u16 = 32,
-    EP_bias: EPBias = .automatic,
+    ep_bias: EP_Bias = .automatic,
 };
 
 fn no_op_event_handler(_: *const anyopaque, _: EpEvent) void {}
 
 pub fn Endpoint(comptime config: Config) type {
-    switch (config.EP_bias) {
+    switch (config.ep_bias) {
         .hard_bias => |bias| {
             comptime {
                 if (bias == 0) @compileError("Endpoint bias cannot be 0, as it would conflict with EP0.");
@@ -105,7 +105,7 @@ pub fn Endpoint(comptime config: Config) type {
     }
     return struct {
         event: EventHandler = no_op_event_handler,
-        CTRL: *const Gateway.IO_CTRL = undefined,
+        ctrl: *const Gateway.IO_CTRL = undefined,
 
         pub fn into_descriptor(ep_num: u4) EndpointDescriptor {
             //Only in USB HS, for now we will assume that the user will set the ATO field correctly based on the USB speed they intend to use.

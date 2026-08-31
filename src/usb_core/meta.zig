@@ -74,7 +74,7 @@ pub fn derive_from(from: @EnumLiteral(), meta: []const Meta) MetaDerive {
 
 /// This function will process the provided meta information and generate the necessary descriptors.
 ///
-/// recives a tuple containing RAW interface or pre processed meta information.
+/// receives a tuple containing RAW interface or pre processed meta information.
 /// and returns an array of processed Meta structs that can be used for generating the final USB descriptors for the device.
 pub fn processMetaInterface(T: type, comptime meta: anytype) []const Meta {
     var metas: [meta_len(meta)]Meta = undefined;

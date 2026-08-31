@@ -8,7 +8,7 @@ const ConfigGen = @import("config_gen.zig");
 const Gateway = @import("gateway.zig");
 const Descriptor = @import("USB/descriptors.zig");
 
-const EpGateway = Gateway.EpGateway;
+const ep_gateway = Gateway.EP_Gateway;
 const InterfaceGateway = Gateway.InterfaceGateway;
 const ConfigOutput = ConfigGen.ConfigOut;
 
@@ -24,7 +24,7 @@ pub const EventIn = union(enum) {
     reset: void,
     setup: void,
     ep_send_data: u4,
-    ep_recive_data: EpRecvEvent,
+    ep_receive_data: EpRecvEvent,
 };
 
 pub const EventOut = union(enum) {
@@ -55,7 +55,7 @@ pub const EventCore = struct {
     ep0_len: usize,
     device_blob: []const u8,
     config_blob: []const ConfigOutput,
-    device_quili_blob: ?[]const u8 = null, //TODO: Add support to USB-HS
+    device_quali_blob: ?[]const u8 = null, //TODO: Add support to USB-HS
 
     id_len: usize,
     string_id_mapper: []const usize,
@@ -63,11 +63,11 @@ pub const EventCore = struct {
     all_strings: []const []const u8,
 
     interface_gateway: []InterfaceGateway,
-    ep_gateway: []EpGateway,
+    ep_gateway: []ep_gateway,
     buffer: []u8,
 
     enabled: bool = false,
-    API: *const Gateway.EpGatewayAPI = undefined,
+    API: *const Gateway.EP_Gateway_API = undefined,
 
     actual_config: ?*const ConfigOutput = null,
     state: CoreState = .IDLE,
@@ -80,7 +80,7 @@ pub const EventCore = struct {
         string_id_mapper: []const usize,
         all_strings: []const []const u8,
         interface_gateway: []InterfaceGateway,
-        ep_gateway: []EpGateway,
+        ep_gateways: []ep_gateway,
         buffer: []u8,
     ) EventCore {
         const ep0_len: usize = device_blob[7];
@@ -94,7 +94,7 @@ pub const EventCore = struct {
             .all_strings = all_strings,
 
             .interface_gateway = interface_gateway,
-            .ep_gateway = ep_gateway,
+            .ep_gateway = ep_gateways,
             .buffer = buffer,
             .ep0_len = ep0_len,
         };
@@ -121,7 +121,7 @@ pub const EventCore = struct {
         const string_blob = &@field(blob_type.string_blobs, "string_indexes");
         const all_strings = @field(blob_type.string_blobs, "all_strings");
         const interface_gateway = &@field(blob, "interfaces");
-        const ep_gateway = &@field(blob, "endpoints");
+        const ep_gateways = &@field(blob, "endpoints");
 
         const ep0_len: usize = device_blob[7];
 
@@ -133,18 +133,18 @@ pub const EventCore = struct {
             .string_blob = @ptrCast(string_blob.ptr),
             .all_strings = all_strings,
             .interface_gateway = interface_gateway,
-            .ep_gateway = ep_gateway,
+            .ep_gateway = ep_gateways,
             .buffer = buffer,
             .ep0_len = ep0_len,
         };
     }
 
-    pub fn enable_core(self: *EventCore, api: *const Gateway.EpGatewayAPI) void {
+    pub fn enable_core(self: *EventCore, api: *const Gateway.EP_Gateway_API) void {
         self.API = api;
         for (self.ep_gateway) |*ep| {
             ep.hardware_api = self.API;
             const ep_inst = Endpoint.restore_ep(ep.instance);
-            ep_inst.CTRL = &ep.ctrl;
+            ep_inst.ctrl = &ep.ctrl;
             self.enabled = true;
         }
     }
@@ -173,7 +173,7 @@ pub const EventCore = struct {
         return self.all_strings[blob_idx];
     }
 
-    pub fn get_ep_gateway(self: *const EventCore, ep_num: u4, dir: Gateway.EpDir) EventError!*const Gateway.EpGateway {
+    pub fn get_ep_gateway(self: *const EventCore, ep_num: u4, dir: Gateway.EP_Dir) EventError!*const Gateway.EP_Gateway {
         const conf = self.actual_config orelse return EventError.NO_CONFIG;
         const ep = switch (dir) {
             .In => conf.endpoint_assignment.in[ep_num - 1],
@@ -201,7 +201,7 @@ pub const EventCore = struct {
                 }
             },
             .setup => return try self.ep0_setup(),
-            .ep_recive_data => |data| {
+            .ep_receive_data => |data| {
                 const num = data.ep_num;
                 if (num == 0) {
                     return self.ep0_rx();
@@ -225,14 +225,14 @@ pub const EventCore = struct {
     }
 
     inline fn ep0_read_api(self: *const EventCore, buf: []u8) EventError![]const u8 {
-        return self.API.recive_data(self.API.driver, 0, buf) catch return EventError.EP0_FAIL;
+        return self.API.receive_data(self.API.driver, 0, buf) catch return EventError.EP0_FAIL;
     }
 
     inline fn ep0_send_api(self: *const EventCore, buf: []const u8) EventError!usize {
         return self.API.send_data(self.API.driver, 0, buf) catch return EventError.EP0_FAIL;
     }
 
-    inline fn ep0_state_api(self: *const EventCore, dir: Gateway.EpDir, state: Gateway.EpState, force_pid: ?u4) EventError!void {
+    inline fn ep0_state_api(self: *const EventCore, dir: Gateway.EP_Dir, state: Gateway.EP_State, force_pid: ?u4) EventError!void {
         return self.API.set_ep_state(self.API.driver, dir, 0, state, force_pid) catch return EventError.EP0_FAIL;
     }
 
@@ -243,7 +243,7 @@ pub const EventCore = struct {
         const pkg = Descriptor.SetupPacket.parse(setup) catch return EventError.INVALID_SETUP;
 
         return switch (pkg.typ()) {
-            .Standard => self.standart_setup(&pkg),
+            .Standard => self.standard_setup(&pkg),
             .Class => self.class_setup(&pkg),
             else => EventError.NOT_IMPLEMENTED,
         };
@@ -300,7 +300,7 @@ pub const EventCore = struct {
     }
 
     //TODO: add more handlers
-    fn standart_setup(self: *EventCore, setup: *const Descriptor.SetupPacket) EventError!?EventOut {
+    fn standard_setup(self: *EventCore, setup: *const Descriptor.SetupPacket) EventError!?EventOut {
         const reciv = setup.recipient();
         const req_parsed = setup.standardRequest() catch unreachable;
 
@@ -322,7 +322,7 @@ pub const EventCore = struct {
                                     };
                                 },
                                 0x06 => {
-                                    break :blk self.device_quili_blob orelse {
+                                    break :blk self.device_quali_blob orelse {
                                         try self.ep0_state_api(.In, .STALL, null);
                                         return null;
                                     };
@@ -332,7 +332,7 @@ pub const EventCore = struct {
                         },
                         .Interface => {
                             const gate = try self.get_interface_gateway(setup.wIndex);
-                            const ret = gate.setup(.{ .standart_setup = &req_parsed }) catch return EventError.INVALID_INTERFACE_CALL;
+                            const ret = gate.setup(.{ .standard_setup = &req_parsed }) catch return EventError.INVALID_INTERFACE_CALL;
 
                             switch (ret) {
                                 .send_data => |data| break :blk data,
@@ -369,7 +369,7 @@ pub const EventCore = struct {
                 for (conf.endpoint_assignment.in, conf.endpoint_assignment.out, 1..) |in, out, idx| {
                     switch (in) {
                         .assigned => |ca| {
-                            const gate: *EpGateway = &self.ep_gateway[ca.gateway_num];
+                            const gate: *ep_gateway = &self.ep_gateway[ca.gateway_num];
                             gate.dir = .In;
                             gate.ep = @intCast(idx);
                         },
@@ -377,7 +377,7 @@ pub const EventCore = struct {
                     }
                     switch (out) {
                         .assigned => |ca| {
-                            const gate: *EpGateway = &self.ep_gateway[ca.gateway_num];
+                            const gate: *ep_gateway = &self.ep_gateway[ca.gateway_num];
                             gate.dir = .Out;
                             gate.ep = @intCast(idx);
                         },
@@ -401,7 +401,7 @@ pub const EventCore = struct {
                 switch (reciv) {
                     .Endpoint => {
                         const ep: u4 = @intCast(setup.wIndex & 0x0F);
-                        const dir: Gateway.EpDir = if ((setup.wIndex & 0x80) == 0) Gateway.EpDir.Out else Gateway.EpDir.In;
+                        const dir: Gateway.EP_Dir = if ((setup.wIndex & 0x80) == 0) Gateway.EP_Dir.Out else Gateway.EP_Dir.In;
 
                         const gate = try self.get_ep_gateway(ep, dir);
 
@@ -533,7 +533,7 @@ const SomeRules = DeviceConfig{
     .id_vendor = 0x1234,
     .id_product = 0x5678,
     .bcd_device = 0x0100,
-    .suported_languages = &.{ LANGID.english_us, LANGID.portuguese_brazil },
+    .supported_languages = &.{ LANGID.english_us, LANGID.portuguese_brazil },
     .manufacturer = manufacturer_string,
     .product = product_string,
     .serial_number = serial_number_string,

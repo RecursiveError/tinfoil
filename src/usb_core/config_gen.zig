@@ -10,7 +10,7 @@ const Strings = @import("strings.zig");
 const Gateway = @import("gateway.zig");
 
 const InterfaceGateway = Gateway.InterfaceGateway;
-const EpGateway = Gateway.EpGateway;
+const ep_gateway = Gateway.EP_Gateway;
 
 pub const EndpointMap = struct {
     out: [15]?usize = @splat(null),
@@ -68,7 +68,7 @@ pub const DeviceConfig = struct {
     id_vendor: u16,
     id_product: u16,
     bcd_device: u16,
-    suported_languages: []const Strings.LANGID,
+    supported_languages: []const Strings.LANGID,
     manufacturer: Strings.USBStrings = .{},
     product: Strings.USBStrings = .{},
     serial_number: Strings.USBStrings = .{},
@@ -85,7 +85,7 @@ pub const ConfigOut = struct {
 ///string blobs of the device, MUST BE KEEP IN SYNC WITH THE BLOBS IN THE DEVICE BLOB, the order of the strings in this blob must be the same as the order of the string descriptors in the device blob.
 pub fn StringBlob(comptime dev: DeviceConfig) type {
     return struct {
-        pub const id_len = dev.suported_languages.len;
+        pub const id_len = dev.supported_languages.len;
         /// this array holds the layout of the string descriptors.
         /// the order of Lang-Ids in this array corresponds to the order of the string descriptors in a String Index.
         /// Example: if the array is [LANGID.en, LANGID.pt_br], then ALL string index will have the English string descriptor first, followed by the Portuguese (Brazil) string descriptor.
@@ -117,7 +117,7 @@ pub fn StdDeviceBlob(all: type, comptime configs: []const Config, comptime devic
         pub const string_blobs = out.string_blobs;
         pub const device_blob = device_desc;
         interfaces: [len.@"0"]InterfaceGateway,
-        endpoints: [len.@"1"]EpGateway,
+        endpoints: [len.@"1"]ep_gateway,
     };
 }
 
@@ -139,7 +139,7 @@ pub fn DeviceBuilder(comptime device: DeviceConfig, all_interfaces: anytype, com
     }
 
     inline for (comptime ep_path, 0..) |path, idx| {
-        blob.endpoints[idx] = EpGateway{
+        blob.endpoints[idx] = ep_gateway{
             .instance = get_instance(all_interfaces, path),
         };
     }
@@ -160,9 +160,9 @@ fn gen_device_descriptor(comptime device: DeviceConfig, comptime config_len: usi
     //in this framework string index 1 - 3 are always reserved for: manufacturer, product and serial number string descriptors
     // so we can check if the string descriptors are empty and set the index to 0 if they are, otherwise set them to 1, 2 and 3 respectively.
 
-    const manufacturer_index: u8 = if (device.manufacturer.check_string(device.suported_languages)) 1 else 0;
-    const product_index: u8 = if (device.product.check_string(device.suported_languages)) 2 else 0;
-    const serial_number_index: u8 = if (device.serial_number.check_string(device.suported_languages)) 3 else 0;
+    const manufacturer_index: u8 = if (device.manufacturer.check_string(device.supported_languages)) 1 else 0;
+    const product_index: u8 = if (device.product.check_string(device.supported_languages)) 2 else 0;
+    const serial_number_index: u8 = if (device.serial_number.check_string(device.supported_languages)) 3 else 0;
 
     const desc = Descriptors.DeviceDescriptor{
         .bLength = 18,
@@ -189,12 +189,12 @@ fn gen_device_descriptor(comptime device: DeviceConfig, comptime config_len: usi
 fn gen_out_data(all: type, comptime configs: []const Config, comptime device: DeviceConfig) OutBlob(device, configs) {
     comptime {
         const sizes = calc_all_interface(all);
-        const strs = calc_max_strings(sizes.@"2", configs.len, device.suported_languages.len);
+        const strs = calc_max_strings(sizes.@"2", configs.len, device.supported_languages.len);
         const strs_entrys = sizes.@"2" + configs.len + 4; //interfaces + configs + 4 for manufacturer, product, serial number and LANGID string descriptors
 
         var string_blob: [strs][]const u8 = undefined;
-        var string_mapper: [strs_entrys][device.suported_languages.len]usize = undefined;
-        var string_id_mapper: [device.suported_languages.len]usize = undefined;
+        var string_mapper: [strs_entrys][device.supported_languages.len]usize = undefined;
+        var string_id_mapper: [device.supported_languages.len]usize = undefined;
         var str_blob_idx: usize = 0;
         var str_mapper_idx: usize = 0;
 
@@ -257,7 +257,7 @@ fn gen_out_data(all: type, comptime configs: []const Config, comptime device: De
         // finally load the configuration strings into the string blob and string mapper.
 
         for (configs, 0..) |c, i| {
-            const config_string_index = apply_string(device.suported_languages.len, c.iConfig, device, &string_blob, &string_mapper, &str_blob_idx, &str_mapper_idx);
+            const config_string_index = apply_string(device.supported_languages.len, c.iConfig, device, &string_blob, &string_mapper, &str_blob_idx, &str_mapper_idx);
             OUT[i] = gen_config_out(c, i + 1, config_string_index, device.endpoint_rules, used_interfaces, used_eps, used_lookup);
         }
 
@@ -270,7 +270,7 @@ fn gen_out_data(all: type, comptime configs: []const Config, comptime device: De
         };
 
         const final_mapper = blk: {
-            var fixed: [str_mapper_idx][device.suported_languages.len]usize = undefined;
+            var fixed: [str_mapper_idx][device.supported_languages.len]usize = undefined;
             for (0..str_mapper_idx) |i| {
                 fixed[i] = string_mapper[i];
             }
@@ -294,19 +294,19 @@ fn init_string_blob(
     comptime device: DeviceConfig,
     comptime string_id_mapper: []usize,
     comptime string_blob: [][]const u8,
-    comptime string_mapper: [][device.suported_languages.len]usize,
+    comptime string_mapper: [][device.supported_languages.len]usize,
     comptime str_blob_idx: *usize,
     comptime str_mapper_idx: *usize,
 ) void {
-    const lang_len = device.suported_languages.len;
+    const lang_len = device.supported_languages.len;
 
     //load index 0 with the LANGID string descriptor, which is always present in the device.
-    const total_len = (device.suported_languages.len * 2) + 2;
+    const total_len = (device.supported_languages.len * 2) + 2;
     comptime var idx_0: [total_len]u8 = undefined;
     idx_0[0] = @intCast(total_len);
     idx_0[1] = @backingInt(Descriptors.DescriptorType.String);
 
-    for (device.suported_languages, 0..) |lang, i| {
+    for (device.supported_languages, 0..) |lang, i| {
         string_id_mapper[i] = @as(usize, @backingInt(lang));
         const raw: u16 = @backingInt(lang);
         const low_byte: u8 = @intCast(raw & 0xFF);
@@ -332,7 +332,7 @@ fn load_interface_strings(
     comptime interfaces: []InnerInterfaceMap,
     comptime lookup_table: []InnerInterfaces,
     comptime string_blob: [][]const u8,
-    comptime string_mapper: [][device.suported_languages.len]usize,
+    comptime string_mapper: [][device.supported_languages.len]usize,
     comptime str_blob_idx: *usize,
     comptime str_mapper_idx: *usize,
 ) void {
@@ -340,7 +340,7 @@ fn load_interface_strings(
     //load all interface strings into the string blob and string mapper
     for (interfaces) |*iface| {
         const string = iface.data.iInterface;
-        iface.inner_string_index = apply_string(device.suported_languages.len, string, device, string_blob, string_mapper, str_blob_idx, str_mapper_idx);
+        iface.inner_string_index = apply_string(device.supported_languages.len, string, device, string_blob, string_mapper, str_blob_idx, str_mapper_idx);
     }
 
     //load all IAD strings into the string blob and string mapper
@@ -348,7 +348,7 @@ fn load_interface_strings(
         switch (lookup.meta) {
             .iad => |iad| {
                 const string = iad.data.iFunction;
-                iad.inner_string_index = apply_string(device.suported_languages.len, string, device, string_blob, string_mapper, str_blob_idx, str_mapper_idx);
+                iad.inner_string_index = apply_string(device.supported_languages.len, string, device, string_blob, string_mapper, str_blob_idx, str_mapper_idx);
             },
             else => {},
         }
@@ -638,7 +638,7 @@ fn apply_string(
 ) usize {
     var mapper: [langs]usize = @splat(0);
 
-    inline for (device.suported_languages, 0..) |lang, i| {
+    inline for (device.supported_languages, 0..) |lang, i| {
         const maybe_str = to_apply.get_string(lang);
         const maybe_fallback = to_apply.fallback;
         if (maybe_str) |s| {
@@ -758,7 +758,7 @@ fn automatic_enumarate_ep(
             .Out => rules.out[0..],
         };
         used_memory += ep.config.max_packet_size;
-        switch (ep.config.EP_bias) {
+        switch (ep.config.ep_bias) {
             .hard_bias => |bias| {
                 //bias is already checked to be valid ( bias != 0 and bias <= 15 ) in the Endpoint type, so we can just assign it directly.
 
@@ -811,7 +811,7 @@ fn automatic_enumarate_ep(
 
         used_memory += ep.config.max_packet_size;
 
-        switch (ep.config.EP_bias) {
+        switch (ep.config.ep_bias) {
             .soft_bias => |bias| {
                 //check if the preferred EP number is available:
                 ep.current_address = bias;
@@ -871,7 +871,7 @@ fn automatic_enumarate_ep(
         };
         used_memory += ep.config.max_packet_size;
 
-        switch (ep.config.EP_bias) {
+        switch (ep.config.ep_bias) {
             .automatic => next_available_ep(idx, ep, assignment_arr, rules_arr),
             else => {},
         }
