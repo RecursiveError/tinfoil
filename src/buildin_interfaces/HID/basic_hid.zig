@@ -1,6 +1,7 @@
 const std = @import("std");
 const core = @import("core");
-const Scankey = @import("basic_scankey.zig");
+
+pub const Scankey = @import("basic_scankey.zig");
 
 const Endpoint = core.Endpoint;
 const Strings = core.Strings;
@@ -49,7 +50,16 @@ const report_descriptor = [_]u8{
     0xC0, // End Collection
 };
 
-const foo_interface_string = USBStrings{
+pub const StatusPacket = packed struct(u8) {
+    num_lock: bool = false,
+    caps_lock: bool = false,
+    scroll_lock: bool = false,
+    compose: bool = false,
+    kana: bool = false,
+    reserved: u3 = 0,
+};
+
+const interface_string = USBStrings{
     .fallback = &Strings.StringToUSB("Basic Boot Keyboard"),
     .portuguese_brazil = &Strings.StringToUSB("teclado Boot basico"),
 };
@@ -67,6 +77,7 @@ pub const BootKeyboard = struct {
     }),
 
     lock: std.atomic.Mutex = .locked,
+    state: StatusPacket = .{},
 
     fn setup_handler(inst: *const anyopaque, event: core.Gateway.InterfaceEventIn) core.Gateway.InterfaceEventOut {
         const self: *@This() = @ptrCast(@alignCast(@constCast(inst)));
@@ -96,6 +107,11 @@ pub const BootKeyboard = struct {
 
     fn ep2_handler(self: *const anyopaque, _: Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "ep2") = @ptrCast(@alignCast(@constCast(self)));
+        const inner_self: *@This() = @fieldParentPtr("ep2", ep);
+        var pkg: [1]u8 = undefined;
+
+        _ = ep.ctrl.receive_data(&pkg) catch @panic("HID STATE FAIL");
+        inner_self.state = @bitCast(pkg[0]);
         ep.ctrl.set_ep_state(.READY, null) catch @panic("HID ENABLE FAIL");
     }
 
@@ -118,11 +134,11 @@ pub const BootKeyboard = struct {
                 .protocol_code = 0x01,
                 .alternate_setting = 0,
                 .blobs = &.{
-                    &.{ 0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00 },
+                    .raw(&.{ 0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00 }),
                 },
                 .endpoints = &.{ .ep1, .ep2 },
                 .setup = setup_handler,
-                .iInterface = foo_interface_string,
+                .iInterface = interface_string,
             },
         });
     }

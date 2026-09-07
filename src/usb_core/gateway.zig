@@ -82,7 +82,7 @@ pub const IO_CTRL = struct {
         const gate: *const EP_Gateway = @alignCast(@fieldParentPtr("ctrl", self));
         const ep = try gate.check_ep();
         if (gate.dir == .In) return GatewayError.InvalidOp;
-        return gate.hardware_api.receive_data(gate.hardware_api.driver, ep, gate.dir, data);
+        return gate.hardware_api.receive_data(gate.hardware_api.driver, ep, data);
     }
 
     pub inline fn set_ep_state(self: *const IO_CTRL, state: EP_State, force_pid: ?u4) GatewayError!void {

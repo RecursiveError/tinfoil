@@ -2,9 +2,36 @@ const std = @import("std");
 const String = @import("strings.zig");
 
 pub fn PathFieldType(comptime T: type, comptime path: []const u8) type {
-    if (std.mem.indexOfScalar(u8, path, '.')) |dot|
-        return PathFieldType(@FieldType(T, path[0..dot]), path[dot + 1 ..]);
-    return @FieldType(T, path);
+    return InnerPathFieldType(T, comptime path, path);
+}
+fn InnerPathFieldType(comptime T: type, comptime path: []const u8, full_path: []const u8) type {
+    if (std.mem.indexOfScalar(u8, path, '.')) |dot| {
+        const fd_t = @FieldType(T, path[0..dot]);
+        const next = path[dot + 1 ..];
+        if (@hasField(fd_t, next)) {
+            return InnerPathFieldType(fd_t, next, full_path);
+        } else {
+            @compileError(std.fmt.comptimePrint(
+                \\ERROR ON PATH: {s}
+                \\Type {s} has no field named {s}.
+                \\
+            , .{
+                full_path,
+                @typeName(T),
+                path,
+            }));
+        }
+    }
+    if (@hasField(T, path)) return @FieldType(T, path);
+    @compileError(std.fmt.comptimePrint(
+        \\ERROR ON PATH: {s}
+        \\Type {s} has no field named {s}.
+        \\
+    , .{
+        full_path,
+        @typeName(T),
+        path,
+    }));
 }
 
 fn check(base: type, comptime path: []const u8) type {

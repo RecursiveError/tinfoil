@@ -346,7 +346,7 @@ fn load_interface_strings(
     //load all IAD strings into the string blob and string mapper
     for (lookup_table) |*lookup| {
         switch (lookup.meta) {
-            .iad => |iad| {
+            .iad => |*iad| {
                 const string = iad.data.iFunction;
                 iad.inner_string_index = apply_string(device.supported_languages.len, string, device, string_blob, string_mapper, str_blob_idx, str_mapper_idx);
             },
@@ -429,14 +429,10 @@ fn calc_gateway_len(meta: []const Meta.Meta) struct { usize, usize, usize } {
                 ep_len += iface.endpoints.len;
                 full_len += 1;
             },
-            .IAD => |iad| {
-                interface_len += iad.interfaces.len;
-                for (iad.interfaces) |iface| {
-                    ep_len += iface.endpoints.len;
-                }
+            .IAD => {
                 full_len += 1;
             },
-            .Derive => |derive| {
+            .Derive, .FlatDerive => |derive| {
                 const ret = calc_gateway_len(derive.meta);
                 interface_len += ret.@"0";
                 ep_len += ret.@"1";
@@ -458,7 +454,7 @@ fn calc_all_interface(all: type) struct { usize, usize, usize } {
     var full_inter_len: comptime_int = 0;
     switch (info) {
         .@"struct" => |st| {
-            for (st.field_types) |fd| {
+            for (st.field_types, st.field_names) |fd, name| {
                 const inner = @typeInfo(fd);
                 switch (inner) {
                     .pointer => |pt| {
@@ -471,13 +467,13 @@ fn calc_all_interface(all: type) struct { usize, usize, usize } {
                                 endpoints_len += ret.@"1";
                                 full_inter_len += ret.@"2";
                             } else {
-                                @compileError(std.fmt.comptimePrint("field: {s} type {s} into_meta function does not return valid metadata ([]const Meta)", .{ fd.name, @typeName(inter) }));
+                                @compileError(std.fmt.comptimePrint("field: {s} type {s} into_meta function does not return valid metadata ([]const Meta)", .{ name, @typeName(inter) }));
                             }
                         } else {
-                            @compileError(std.fmt.comptimePrint("field: {s} type {s} does not have a into_meta function", .{ fd.name, @typeName(inter) }));
+                            @compileError(std.fmt.comptimePrint("field: {s} type {s} does not have a into_meta function", .{ name, @typeName(inter) }));
                         }
                     },
-                    else => @compileError(std.fmt.comptimePrint("field: {s} is not a pointer to a interface instance", .{fd.name})),
+                    else => @compileError(std.fmt.comptimePrint("field: {s} is not a pointer to a interface instance", .{name})),
                 }
             }
         },
@@ -497,7 +493,7 @@ fn calc_interfaces(all: []const InnerInterfaces, used: []const @EnumLiteral()) u
             if (std.mem.eql(u8, i.parent, @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => count += 1,
-                    .iad => |iad| count += iad.data.interfaces.len,
+                    else => {},
                 }
             }
         }
@@ -512,11 +508,7 @@ fn calc_endpoints(all: []const InnerInterfaces, interfaces: []const InnerInterfa
             if (std.mem.eql(u8, i.parent, @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => count += interfaces[i.meta.interface_idx].data.endpoints.len,
-                    .iad => |iad| {
-                        for (iad.data.interfaces) |iface| {
-                            count += iface.endpoints.len;
-                        }
-                    },
+                    else => {},
                 }
             }
         }
@@ -546,17 +538,13 @@ fn calc_blobs(all: []const InnerInterfaces, interfaces: []const InnerInterfaceMa
                     .interface_idx => {
                         const blobs = interfaces[i.meta.interface_idx].data.blobs;
                         for (blobs) |b| {
-                            count += b.len;
-                        }
-                    },
-                    .iad => |iad| {
-                        for (iad.data.interfaces) |iface| {
-                            const blobs = iface.blobs;
-                            for (blobs) |b| {
-                                count += b.len;
+                            switch (b) {
+                                .Raw => |data| count += data.len,
+                                else => count += 1,
                             }
                         }
                     },
+                    else => {},
                 }
             }
         }
@@ -588,25 +576,20 @@ fn get_meta_ir(
                 lookup_idx.* += 1;
             },
             .IAD => |iad| {
-                const start_interface = iface_idx.*;
-                for (iad.interfaces) |iface| {
-                    apply_interface(inner_t, iface, eps_idx, eps, iface_idx, interfaces);
-                    iface_idx.* += 1;
-                }
                 lookup[lookup_idx.*] = InnerInterfaces{
                     .meta = .{ .iad = .{
                         .data = iad,
-                        .interfaces_start_idx = start_interface,
+                        .interfaces_start_idx = iface_idx.*,
                     } },
                     .parent = parent,
                 };
                 lookup_idx.* += 1;
             },
-            .Derive => |to_derive| {
-                if (@hasField(inner_t, @tagName(to_derive.from))) {
+            .Derive, .FlatDerive => |to_derive| {
+                if (@hasField(inner_t, @tagName(to_derive.id))) {
                     get_meta_ir(
-                        @FieldType(inner_t, @tagName(to_derive.from)),
-                        parent,
+                        @FieldType(inner_t, @tagName(to_derive.id)),
+                        std.fmt.comptimePrint("{s}.{s}", .{ parent, @tagName(to_derive.id) }),
                         to_derive.meta,
                         iface_idx,
                         interfaces,
@@ -618,7 +601,7 @@ fn get_meta_ir(
                 } else {
                     @compileError(std.fmt.comptimePrint("Type {s} does not have a field: {s}", .{
                         @typeName(inner_t),
-                        @tagName(to_derive.from),
+                        @tagName(to_derive.id),
                     }));
                 }
             },
@@ -713,14 +696,7 @@ fn load_used_eps(all: []const InnerInterfaces, interfaces: []const InnerInterfac
                     .interface_idx => |iface| {
                         inner_load(interfaces[iface], &idx, out);
                     },
-                    .iad => |iad| {
-                        const len = iad.data.interfaces.len;
-                        const start = iad.interfaces_start_idx;
-                        const slice = interfaces[start .. start + len];
-                        for (slice) |iface| {
-                            inner_load(iface, &idx, out);
-                        }
-                    },
+                    else => {},
                 }
             }
         }
@@ -931,20 +907,21 @@ fn gen_raw_config(
             if (std.mem.eql(u8, l.parent, @tagName(u))) {
                 switch (l.meta) {
                     .iad => |iad| {
-                        const len = iad.data.interfaces.len;
-                        const slice = interfaces[iad.interfaces_start_idx .. iad.interfaces_start_idx + len];
                         const iad_desc = iad.data.into_descriptor(iface_idx, iad.inner_string_index);
                         _ = iad_desc.writeTo(out[out_idx .. out_idx + 8]) catch unreachable;
-                        out_idx += 8;
-                        for (slice) |iface| {
-                            inner_gen_raw_config(iface, eps, out[out_idx..], &out_idx, &iface_idx);
-                            interface_map[iface_idx] = iface.runtime_index;
-                            iface_idx += 1;
-                        }
                     },
                     .interface_idx => |idx| {
                         const iface = interfaces[idx];
-                        inner_gen_raw_config(iface, eps, out[out_idx..], &out_idx, &iface_idx);
+                        inner_gen_raw_config(
+                            interfaces,
+                            lookup,
+                            l.parent,
+                            iface,
+                            eps,
+                            out[out_idx..],
+                            &out_idx,
+                            &iface_idx,
+                        );
                         interface_map[iface_idx] = iface.runtime_index;
                         iface_idx += 1;
                     },
@@ -954,7 +931,16 @@ fn gen_raw_config(
     }
 }
 
-fn inner_gen_raw_config(interface: InnerInterfaceMap, eps: []const InnerEP, out: []u8, out_idx: *usize, iface_idx: *usize) void {
+fn inner_gen_raw_config(
+    interfaces: []const InnerInterfaceMap,
+    lookup: []const InnerInterfaces,
+    parent: []const u8,
+    interface: InnerInterfaceMap,
+    eps: []const InnerEP,
+    out: []u8,
+    out_idx: *usize,
+    iface_idx: *usize,
+) void {
     const inter_desc = interface.data.into_descriptor(iface_idx.*, interface.inner_string_index);
     const endpoint_len = interface.data.endpoints.len;
     const ep_slice = eps[interface.endpoint_start_idx .. interface.endpoint_start_idx + endpoint_len];
@@ -963,8 +949,21 @@ fn inner_gen_raw_config(interface: InnerInterfaceMap, eps: []const InnerEP, out:
     //add blobs if they exist:
 
     for (interface.data.blobs) |blob| {
-        std.mem.copyForwards(u8, out[start_idx..], blob);
-        start_idx += blob.len;
+        switch (blob) {
+            .Raw => |data| {
+                std.mem.copyForwards(u8, out[start_idx..], data);
+                start_idx += data.len;
+            },
+            .InterfaceNumber => |id| {
+                out[start_idx] = get_blob_iface_num(
+                    interfaces,
+                    lookup,
+                    std.fmt.comptimePrint("{s}.{s}", .{ parent, id.parent }),
+                    id.Instance_num,
+                );
+            },
+            else => {}, //TODO
+        }
     }
 
     for (ep_slice) |ep| {
@@ -975,6 +974,28 @@ fn inner_gen_raw_config(interface: InnerInterfaceMap, eps: []const InnerEP, out:
     out_idx.* += start_idx;
 }
 
+fn get_blob_iface_num(
+    interfaces: []const InnerInterfaceMap,
+    lookup: []const InnerInterfaces,
+    parent: []const u8,
+    id: usize,
+) u8 {
+    var idx_num: u8 = 0;
+    for (lookup) |l| {
+        switch (l.meta) {
+            .interface_idx => |idx| {
+                idx_num += 1;
+                if (std.mem.eql(u8, l.parent, parent)) {
+                    if (interfaces[idx].data.instance_num) |num| {
+                        if (num == id) return idx_num;
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    @compileError(std.fmt.comptimePrint("instance_num {d} does not exist in {s} metadata", .{ id, parent }));
+}
 fn get_interface_paths(all: type) []const InnerMapInterface {
     const size = comptime calc_all_interface(all).@"0";
     comptime var paths: [size]InnerMapInterface = undefined;
@@ -1000,30 +1021,21 @@ fn inner_interface_paths(inner: type, comptime base_path: []const u8, meta: []co
                 };
                 idx.* += 1;
             },
-            .IAD => |iad| {
-                for (iad.interfaces) |iface| {
-                    out[idx.*] = InnerMapInterface{
-                        .path = base_path,
-                        .setup = iface.setup,
-                        .instance_num = iface.instance_num,
-                    };
-                    idx.* += 1;
-                }
-            },
-            .Derive => |derive| {
+            .Derive, .FlatDerive => |derive| {
                 //types are already checked in the meta parser, so we can just call the function recursively:
-                if (@hasField(inner, @tagName(derive.from))) {
-                    const next = @FieldType(inner, @tagName(derive.from));
+                if (@hasField(inner, @tagName(derive.id))) {
+                    const next = @FieldType(inner, @tagName(derive.id));
                     const next_meta = next.into_meta();
-                    const next_base_path = std.fmt.comptimePrint("{s}.{s}", .{ base_path, @tagName(derive.from) });
+                    const next_base_path = std.fmt.comptimePrint("{s}.{s}", .{ base_path, @tagName(derive.id) });
                     inner_interface_paths(next, next_base_path, next_meta, out, idx);
                 } else {
                     @compileError(std.fmt.comptimePrint("Type {s} does not have a field: {s}", .{
                         @typeName(inner),
-                        @tagName(derive.from),
+                        @tagName(derive.id),
                     }));
                 }
             },
+            else => {},
         }
     }
 }
@@ -1051,28 +1063,21 @@ fn inner_endpoint_paths(inner: type, comptime base_path: []const u8, meta: []con
                     idx.* += 1;
                 }
             },
-            .IAD => |iad| {
-                for (iad.interfaces) |iface| {
-                    for (iface.endpoints) |ep| {
-                        out[idx.*] = std.fmt.comptimePrint("{s}.{s}", .{ base_path, @tagName(ep) });
-                        idx.* += 1;
-                    }
-                }
-            },
-            .Derive => |derive| {
+            .Derive, .FlatDerive => |derive| {
                 //types are already checked in the meta parser, so we can just call the function recursively:
-                if (@hasField(inner, @tagName(derive.from))) {
-                    const next = @FieldType(inner, @tagName(derive.from));
+                if (@hasField(inner, @tagName(derive.id))) {
+                    const next = @FieldType(inner, @tagName(derive.id));
                     const next_meta = next.into_meta();
-                    const next_base_path = std.fmt.comptimePrint("{s}.{s}", .{ base_path, @tagName(derive.from) });
+                    const next_base_path = std.fmt.comptimePrint("{s}.{s}", .{ base_path, @tagName(derive.id) });
                     inner_endpoint_paths(next, next_base_path, next_meta, out, idx);
                 } else {
                     @compileError(std.fmt.comptimePrint("Type {s} does not have a field: {s}", .{
                         @typeName(inner),
-                        @tagName(derive.from),
+                        @tagName(derive.id),
                     }));
                 }
             },
+            else => {},
         }
     }
 }
