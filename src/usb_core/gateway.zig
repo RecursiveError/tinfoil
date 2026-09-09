@@ -12,6 +12,8 @@ pub const InterfaceEventIn = union(enum) {
     enabled: void,
     disable: void,
     send_complete: []const u8,
+    recive_data: []const u8,
+    recive_completed: void, //on short pkg or ZLP,
     class_setup: *const SetupPacket,
     standard_setup: *const StandardRequestData,
 };
@@ -20,6 +22,7 @@ pub const InterfaceEventOut = union(enum) {
     STALL,
     ZLP,
     send_data: []const u8,
+    recive_data,
     None,
 };
 

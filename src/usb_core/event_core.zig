@@ -49,7 +49,9 @@ pub const CoreState = union(enum) {
     sending_data: struct {
         data: []const u8,
         index: usize,
+        notify_interface: ?usize = null,
     },
+    recive_data: usize, //<- interface ID
 };
 
 pub const EventCore = struct {
@@ -251,6 +253,18 @@ pub const EventCore = struct {
     }
 
     fn ep0_rx(self: *EventCore) EventError!?EventOut {
+        switch (self.state) {
+            .recive_data => |id| {
+                const iface = try self.get_interface_gateway(id);
+                const ret = try self.ep0_read_api(self.buffer);
+                if (ret.len == 0)
+                    try self.class_event_out(iface.setup(.recive_completed) catch return EventError.INVALID_INTERFACE_CALL, id);
+                try self.class_event_out(iface.setup(.{ .recive_data = self.buffer[0..ret.len] }) catch return EventError.INVALID_INTERFACE_CALL, id);
+                if (ret.len < self.ep0_len)
+                    try self.class_event_out(iface.setup(.recive_completed) catch return EventError.INVALID_INTERFACE_CALL, id);
+            },
+            else => {},
+        }
         try self.ep0_state_api(.Out, .READY, null);
         return null;
     }
@@ -264,6 +278,7 @@ pub const EventCore = struct {
                 _ = try self.ep0_send_api(&.{});
                 try self.ep0_state_api(.In, .READY, null);
                 self.state = .IDLE;
+                try self.ep0_state_api(.Out, .READY, null);
             },
             .addr_setup => |addr| {
                 try self.ep0_state_api(.Out, .READY, null);
@@ -275,16 +290,29 @@ pub const EventCore = struct {
                 const new_slice = data.data[data.index..];
                 const min = @min(new_slice.len, self.ep0_len);
                 const loaded = try self.ep0_send_api(new_slice[0..min]);
+                var end = false;
                 if ((loaded + data.index) >= data.data.len and loaded == self.ep0_len) {
                     self.state = .ZLP;
+                    end = true;
                 } else if ((loaded + data.index) >= data.data.len and loaded != self.ep0_len) {
+                    try self.ep0_state_api(.Out, .READY, null);
                     self.state = .IDLE;
+                    end = true;
                 } else {
                     self.state.sending_data.index += loaded;
                 }
 
+                if (end) {
+                    if (data.notify_interface) |id| {
+                        const iface = try self.get_interface_gateway(id);
+                        //No event will be processed afert a send_complete
+                        _ = iface.setup(.{ .send_complete = data.data }) catch return EventError.INVALID_INTERFACE_CALL;
+                    }
+                }
+
                 try self.ep0_state_api(.In, .READY, null);
             },
+            else => {},
         }
         return null;
     }
@@ -431,14 +459,14 @@ pub const EventCore = struct {
             .Interface => {
                 const gate = try self.get_interface_gateway(setup.wIndex);
                 const ret = gate.setup(.{ .class_setup = setup }) catch return EventError.INVALID_INTERFACE_CALL;
-                try self.class_event_out(ret);
+                try self.class_event_out(ret, setup.wIndex);
             },
             else => return EventError.NOT_IMPLEMENTED,
         }
         return null;
     }
 
-    fn class_event_out(self: *const EventCore, event: Gateway.InterfaceEventOut) EventError!void {
+    fn class_event_out(self: *const EventCore, event: Gateway.InterfaceEventOut, interface_id: usize) EventError!void {
         switch (event) {
             .ZLP => {
                 _ = try self.ep0_send_api(&.{});
@@ -447,7 +475,29 @@ pub const EventCore = struct {
             .STALL => {
                 try self.ep0_state_api(.In, .STALL, null);
             },
-            .send_data => {},
+            .send_data => |data| {
+                const mut_self = @constCast(self);
+                const min = @min(self.ep0_len, data.len);
+                const slice = data[0..min];
+                const ret = try self.ep0_send_api(slice);
+
+                if (ret < data.len) {
+                    mut_self.state = .{ .sending_data = .{
+                        .data = data,
+                        .index = ret,
+                        .notify_interface = interface_id,
+                    } };
+                } else {
+                    mut_self.state = .ZLP;
+                }
+
+                try self.ep0_state_api(.In, .READY, null);
+            },
+            .recive_data => {
+                const mut_self = @constCast(self);
+                mut_self.state = .{ .recive_data = interface_id };
+                try self.ep0_state_api(.Out, .READY, null);
+            },
             else => {},
         }
     }

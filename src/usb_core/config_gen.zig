@@ -489,8 +489,10 @@ fn calc_all_interface(all: type) struct { usize, usize, usize } {
 fn calc_interfaces(all: []const InnerInterfaces, used: []const @EnumLiteral()) usize {
     var count: usize = 0;
     for (all) |i| {
+        const point = std.mem.find(u8, i.parent, ".") orelse i.parent.len;
+
         for (used) |u| {
-            if (std.mem.eql(u8, i.parent, @tagName(u))) {
+            if (std.mem.eql(u8, i.parent[0..point], @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => count += 1,
                     else => {},
@@ -504,8 +506,9 @@ fn calc_interfaces(all: []const InnerInterfaces, used: []const @EnumLiteral()) u
 fn calc_endpoints(all: []const InnerInterfaces, interfaces: []const InnerInterfaceMap, used: []const @EnumLiteral()) usize {
     var count: usize = 0;
     for (all) |i| {
+        const point = std.mem.find(u8, i.parent, ".") orelse i.parent.len;
         for (used) |u| {
-            if (std.mem.eql(u8, i.parent, @tagName(u))) {
+            if (std.mem.eql(u8, i.parent[0..point], @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => count += interfaces[i.meta.interface_idx].data.endpoints.len,
                     else => {},
@@ -519,10 +522,11 @@ fn calc_endpoints(all: []const InnerInterfaces, interfaces: []const InnerInterfa
 fn calc_IADs(all: []const InnerInterfaces, used: []const @EnumLiteral()) usize {
     var count: usize = 0;
     for (all) |i| {
+        const point = std.mem.find(u8, i.parent, ".") orelse i.parent.len;
         for (used) |u| {
-            if (std.mem.eql(u8, i.parent, @tagName(u))) count += switch (i.meta) {
-                .interface_idx => 0,
+            if (std.mem.eql(u8, i.parent[0..point], @tagName(u))) count += switch (i.meta) {
                 .iad => 1,
+                else => 0,
             };
         }
     }
@@ -532,8 +536,9 @@ fn calc_IADs(all: []const InnerInterfaces, used: []const @EnumLiteral()) usize {
 fn calc_blobs(all: []const InnerInterfaces, interfaces: []const InnerInterfaceMap, used: []const @EnumLiteral()) usize {
     var count: usize = 0;
     for (all) |i| {
+        const point = std.mem.find(u8, i.parent, ".") orelse i.parent.len;
         for (used) |u| {
-            if (std.mem.eql(u8, i.parent, @tagName(u))) {
+            if (std.mem.eql(u8, i.parent[0..point], @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => {
                         const blobs = interfaces[i.meta.interface_idx].data.blobs;
@@ -690,8 +695,9 @@ fn check_ep(T: type, path: []const u8) Endpoint.Config {
 fn load_used_eps(all: []const InnerInterfaces, interfaces: []const InnerInterfaceMap, used: []const @EnumLiteral(), out: []usize) void {
     var idx: usize = 0;
     for (all) |i| {
+        const point = std.mem.find(u8, i.parent, ".") orelse i.parent.len;
         for (used) |u| {
-            if (std.mem.eql(u8, i.parent, @tagName(u))) {
+            if (std.mem.eql(u8, i.parent[0..point], @tagName(u))) {
                 switch (i.meta) {
                     .interface_idx => |iface| {
                         inner_load(interfaces[iface], &idx, out);
@@ -903,12 +909,14 @@ fn gen_raw_config(
     var iface_idx: usize = 0;
 
     for (lookup) |l| {
+        const point = std.mem.find(u8, l.parent, ".") orelse l.parent.len;
         for (used_interfaces) |u| {
-            if (std.mem.eql(u8, l.parent, @tagName(u))) {
+            if (std.mem.eql(u8, l.parent[0..point], @tagName(u))) {
                 switch (l.meta) {
                     .iad => |iad| {
                         const iad_desc = iad.data.into_descriptor(iface_idx, iad.inner_string_index);
                         _ = iad_desc.writeTo(out[out_idx .. out_idx + 8]) catch unreachable;
+                        out_idx += 8;
                     },
                     .interface_idx => |idx| {
                         const iface = interfaces[idx];
@@ -954,13 +962,18 @@ fn inner_gen_raw_config(
                 std.mem.copyForwards(u8, out[start_idx..], data);
                 start_idx += data.len;
             },
-            .InterfaceNumber => |id| {
+            .ExternInterfaceNumber => |id| {
                 out[start_idx] = get_blob_iface_num(
                     interfaces,
                     lookup,
                     std.fmt.comptimePrint("{s}.{s}", .{ parent, id.parent }),
                     id.Instance_num,
                 );
+                start_idx += 1;
+            },
+            .SelfInterfaceNumber => {
+                out[start_idx] = iface_idx.*;
+                start_idx += 1;
             },
             else => {}, //TODO
         }
@@ -984,12 +997,14 @@ fn get_blob_iface_num(
     for (lookup) |l| {
         switch (l.meta) {
             .interface_idx => |idx| {
-                idx_num += 1;
                 if (std.mem.eql(u8, l.parent, parent)) {
                     if (interfaces[idx].data.instance_num) |num| {
-                        if (num == id) return idx_num;
+                        if (num == id) {
+                            return idx_num;
+                        }
                     }
                 }
+                idx_num += 1;
             },
             else => {},
         }

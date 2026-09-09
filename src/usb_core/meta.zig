@@ -17,23 +17,30 @@ pub const InterfaceLocalId = struct {
 
 ///data that will be resolved by the config generator at compile time, this data is used to generate the final USB descriptors for the device.
 pub const Blob = union(enum) {
-    /// Resolve to the interface number of the interface with the provided local id.
-    InterfaceNumber: InterfaceLocalId,
-
-    ///Resolved to the configuration number for which this blob will be generated.
-    ConfigurationNumber: void,
-
-    ///Resolved to the string index  of the interface of this blob.
-    IfaceIndex: void,
-
-    ///Resolved to the Configuration String index which this blob will be generated for.
-    IConfigIndex: void,
-
     ///Raw data, no operation will be performed on this data, it will be copied as is to the final USB descriptors.
     Raw: []const u8,
 
-    pub fn interface_num(id: @EnumLiteral(), instance: usize) Blob {
-        return Blob{ .InterfaceNumber = .{ .Instance_num = instance, .parent = @tagName(id) } };
+    /// Resolve to the interface number of the interface with the provided local id.
+    ExternInterfaceNumber: InterfaceLocalId,
+
+    //////Resolved to the Interface number of this blob.
+    SelfInterfaceNumber,
+
+    ///Resolved to the configuration number for which this blob will be generated.
+    ConfigurationNumber,
+
+    ///Resolved to the string index  of the interface of this blob.
+    IfaceIndex,
+
+    ///Resolved to the Configuration String index which this blob will be generated for.
+    IConfigIndex,
+
+    pub fn extern_interface_num(id: @EnumLiteral(), instance: usize) Blob {
+        return Blob{ .ExternInterfaceNumber = .{ .Instance_num = instance, .parent = @tagName(id) } };
+    }
+
+    pub fn self_interface_num() Blob {
+        return .SelfInterfaceNumber;
     }
 
     pub fn raw(data: []const u8) Blob {
@@ -177,7 +184,7 @@ pub fn processMetaInterface(T: type, comptime meta: anytype) []const Meta {
             }
             for (iface.blobs) |blob| {
                 switch (blob) {
-                    .InterfaceNumber => |id| {
+                    .ExternInterfaceNumber => |id| {
                         if (id.parent.len == 0) continue;
                         _ = Util.PathFieldType(T, id.parent);
                     },
