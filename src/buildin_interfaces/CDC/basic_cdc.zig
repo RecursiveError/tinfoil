@@ -24,10 +24,10 @@ const Parity = enum(u8) {
 };
 
 const Encoding = struct {
-    baudrate: u32,
-    stopbits: StopBits,
-    parity: Parity,
-    data: u8,
+    baudrate: u32 = 115200,
+    stopbits: StopBits = .@"1",
+    parity: Parity = .None,
+    data: u8 = 8,
 
     fn from_pkg(pkg: []const u8) !Encoding {
         if (pkg.len < 7) return error.InvalidEncoding;
@@ -45,12 +45,24 @@ const Encoding = struct {
         enc.data = db;
         return enc;
     }
+
+    fn to_pkg(self: Encoding) [7]u8 {
+        return .{
+            @truncate(self.baudrate),
+            @truncate(self.baudrate >> 8),
+            @truncate(self.baudrate >> 16),
+            @truncate(self.baudrate >> 24),
+            @backingInt(self.stopbits),
+            @backingInt(self.parity),
+            self.data,
+        };
+    }
 };
 
 const SerialState = packed struct(u8) {
-    DTR: u1,
-    RTS: u1,
-    _res: u6,
+    DTR: u1 = 0,
+    RTS: u1 = 0,
+    _res: u6 = 0,
 };
 
 pub const CDC_ACM = struct {
@@ -62,12 +74,18 @@ pub const CDC_ACM = struct {
     }),
 
     lock: std.atomic.Mutex = .locked,
-
     data_interface: CDC_data,
+    encoding: Encoding,
+    state: SerialState = .{},
+    encode_buf: [7]u8 = undefined,
 
     fn ep_handler(self: *const anyopaque, _: Core.Endpoint.EpEvent) void {
         const ep: *@FieldType(@This(), "cdc_ctrl_ep") = @ptrCast(@alignCast(@constCast(self)));
-        ep.ctrl.set_ep_state(.NAK, null) catch @panic("CDC CTRL FAIL");
+
+        //this example does not support Serial RTS/DTS/CTS
+        // send fixed pkg
+        _ = ep.ctrl.send_data(&.{ 0xA1, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00 }) catch {};
+        //ep.ctrl.set_ep_state(.READY, null) catch @panic("CDC CTRL FAIL");
     }
 
     fn setup_handler(inst: *const anyopaque, event: Core.Gateway.InterfaceEventIn) Core.Gateway.InterfaceEventOut {
@@ -75,9 +93,36 @@ pub const CDC_ACM = struct {
 
         switch (event) {
             .enabled => {
-                self.cdc_ctrl_ep.ctrl.set_ep_state(.NAK, 0) catch @panic("CDC ENABLE FAIL");
+                _ = self.cdc_ctrl_ep.ctrl.send_data(&.{ 0xA1, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00 }) catch {};
+                self.cdc_ctrl_ep.ctrl.set_ep_state(.READY, 0) catch @panic("CDC ENABLE FAIL");
                 self.lock.unlock();
             },
+            .class_setup => |setup| {
+                switch (setup.bRequest) {
+                    0x20 => {
+                        //set_line_encoding
+                        return .recive_data;
+                    },
+                    0x21 => {
+                        //get_line_encoding
+                        self.encode_buf = self.encoding.to_pkg();
+                        return .{ .send_data = &self.encode_buf };
+                    },
+                    0x22 => {
+                        self.state = @bitCast(@as(u8, @truncate(setup.wValue)));
+                        return .ZLP;
+                    },
+                    0x23 => return .ZLP,
+                    else => return .STALL,
+                }
+            },
+            .recive_data => |data| {
+                //this interface can only recives the set_line_encoding
+                // so no need for any kind of state machine
+
+                self.encoding = Encoding.from_pkg(data) catch return .STALL;
+            },
+            .recive_completed => return .ZLP,
             else => {},
         }
         return .None;
@@ -97,11 +142,17 @@ pub const CDC_ACM = struct {
                 .subclass_code = 0x02,
                 .protocol_code = 0,
                 .blobs = &.{
-                    .raw(&.{ 0x05, 0x24, 0x00, 0x10, 0x01 }), // CDC Header Functional Descriptor
-                    .raw(&.{ 0x05, 0x24, 0x01, 0x02 }), // CDC Call Management Functional Descriptor
-                    .interface_num(.data_interface, 0),
-                    .raw(&.{ 0x04, 0x24, 0x02, 0x06 }), // CDC ACM Functional Descriptor
-                    .raw(&.{ 0x05, 0x24, 0x06, 0x00, 0x01 }), // CDC Union Functional Descriptor
+                    // CDC Header Functional Descriptor
+                    .raw(&.{ 0x05, 0x24, 0x00, 0x10, 0x01 }),
+                    // CDC ACM Functional Descriptor
+                    .raw(&.{ 0x04, 0x24, 0x02, 0x06 }),
+                    // CDC Call Management Functional Descriptor
+                    .raw(&.{ 0x05, 0x24, 0x01, 0x02 }),
+                    .extern_interface_num(.data_interface, 0),
+                    // CDC Union Functional Descriptor
+                    .raw(&.{ 0x05, 0x24, 0x06 }),
+                    .self_interface_num(),
+                    .extern_interface_num(.data_interface, 0),
                 },
                 .endpoints = &.{.cdc_ctrl_ep},
                 .setup = setup_handler,
@@ -110,11 +161,12 @@ pub const CDC_ACM = struct {
         });
     }
 
-    pub fn init() @This() {
+    pub fn init(encode: Encoding) @This() {
         return @This(){
             .cdc_ctrl_ep = .{
                 .event = ep_handler,
             },
+            .encoding = encode,
             .data_interface = .init(),
         };
     }
